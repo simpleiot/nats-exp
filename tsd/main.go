@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/binary"
+	"github.com/nats-io/nats-server/v2/test"
 	"log"
 	"os"
 	"time"
@@ -12,20 +13,36 @@ import (
 )
 
 func main() {
-	log.Println("NATS TSD experiment")
-	// Use the env variable if running in the container, otherwise use the default.
-	url := os.Getenv("NATS_URL")
-	if url == "" {
-		url = nats.DefaultURL
+
+	var err error
+
+	// create an in-memory test server
+	opts := test.DefaultTestOptions
+	opts.Port = -1
+	opts.JetStream = true
+
+	if opts.StoreDir, err = os.MkdirTemp("tsd", "test"); err != nil {
+		log.Fatalf("failed to create temporary jetstream directory: %v", err)
 	}
 
+	srv := test.RunServer(&opts)
+
+	defer func() {
+		srv.Shutdown()
+		srv.WaitForShutdown()
+		// remove jetstream state
+		_ = os.RemoveAll(opts.StoreDir)
+	}()
+
+	log.Println("NATS TSD experiment")
+
 	// Create an unauthenticated connection to NATS.
-	nc, err := nats.Connect(url)
+	nc, err := nats.Connect(srv.ClientURL())
 	if err != nil {
 		log.Fatal("Error connecting to nats: ", err)
 	}
 
-	// Drain is a safe way to to ensure all buffered messages that were published
+	// Drain is a safe way to ensure all buffered messages that were published
 	// are sent and all buffered messages received on a subscription are processed
 	// being closing the connection.
 	defer func() {
@@ -128,17 +145,58 @@ func main() {
 		log.Fatal("Error getting stream info: ", err)
 	}
 
-	for i := info.State.FirstSeq; i <= info.State.LastSeq; i++ {
-		msg, err := stream.GetMsg(ctx, i)
+	// subscribe to the subject and read back all the messages
+
+	consumerCfg := jetstream.ConsumerConfig{
+		// ack messages in batches
+		AckPolicy:     jetstream.AckAllPolicy,
+		MaxAckPending: 1024 * 10,
+	}
+	consumer, err := stream.CreateConsumer(ctx, consumerCfg)
+
+	if err != nil {
+		log.Fatalf("failed to create consumer: %v", err)
+	}
+
+	msgCtx, err := consumer.Messages()
+	if err != nil {
+		log.Fatalf("failed to create a msg ctx: %v", err)
+	}
+
+	var msg jetstream.Msg
+	var meta *jetstream.MsgMetadata
+
+	for {
+		msg, err = msgCtx.Next()
 		if err != nil {
-			log.Fatal("Error getting message: ", err)
+			log.Fatalf("error receiving next msg: %v", err)
 		}
 
-		_ = msg
+		meta, err = msg.Metadata()
+		if err != nil {
+			log.Fatalf("failed to retrieve msg metadata: %v", err)
+		}
+
+		// ack the msg whenever we reach a batch boundary
+		if meta.Sequence.Stream%uint64(consumerCfg.MaxAckPending) == 0 {
+			if err = msg.Ack(); err != nil {
+				log.Fatalf("failed to ack msg: %v", err)
+			}
+		}
+
+		if meta.NumPending == 0 {
+			// no more messages in the stream
+			break
+		}
+	}
+
+	// ack last batch
+	if err = msg.Ack(); err != nil {
+		log.Fatalf("failed to ack msg: %v", err)
 	}
 
 	dur = time.Since(start).Seconds()
-	cnt := info.State.LastSeq - info.State.FirstSeq + 1
+	cnt := meta.Sequence.Stream - info.State.FirstSeq + 1
 	log.Printf("Get 30,000 points took %.2f, %.0f pts/sec\n", dur, float64(cnt)/dur)
 
 }
