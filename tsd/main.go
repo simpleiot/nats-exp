@@ -76,6 +76,7 @@ func main() {
 
 	ptCount := 10000
 
+	// test sync jetstream publish
 	start := time.Now()
 	for i := uint32(0); i < uint32(ptCount); i++ {
 		binary.LittleEndian.PutUint32(byteSlice, i)
@@ -86,8 +87,9 @@ func main() {
 	}
 
 	dur := time.Since(start).Seconds()
-	log.Printf("js.Publish insert rate for 10,000 points: %v pts/sec\n", float64(ptCount)/dur)
+	log.Printf("js.Publish insert rate for 10,000 points: %.0f pts/sec\n", float64(ptCount)/dur)
 
+	// test async jetstream publish
 	start = time.Now()
 	for i := uint32(0); i < uint32(ptCount); i++ {
 		binary.LittleEndian.PutUint32(byteSlice, i)
@@ -104,8 +106,9 @@ func main() {
 	}
 
 	dur = time.Since(start).Seconds()
-	log.Printf("js.PublishAsync insert rate for 10,000 points: %v pts/sec\n", float64(ptCount)/dur)
+	log.Printf("js.PublishAsync insert rate for 10,000 points: %.0f pts/sec\n", float64(ptCount)/dur)
 
+	// test nats publish
 	start = time.Now()
 	for i := uint32(0); i < uint32(ptCount); i++ {
 		binary.LittleEndian.PutUint32(byteSlice, i)
@@ -116,5 +119,26 @@ func main() {
 	}
 
 	dur = time.Since(start).Seconds()
-	log.Printf("nats.Publish insert rate for 10,000 points: %v pts/sec\n", float64(ptCount)/dur)
+	log.Printf("nats.Publish insert rate for 10,000 points: %.0f pts/sec\n", float64(ptCount)/dur)
+
+	// test time to get data all data from stream
+	start = time.Now()
+	info, err := stream.Info(ctx)
+	if err != nil {
+		log.Fatal("Error getting stream info: ", err)
+	}
+
+	for i := info.State.FirstSeq; i <= info.State.LastSeq; i++ {
+		msg, err := stream.GetMsg(ctx, i)
+		if err != nil {
+			log.Fatal("Error getting message: ", err)
+		}
+
+		_ = msg
+	}
+
+	dur = time.Since(start).Seconds()
+	cnt := info.State.LastSeq - info.State.FirstSeq + 1
+	log.Printf("Get 30,000 points took %.2f, %.0f pts/sec\n", dur, float64(cnt)/dur)
+
 }
