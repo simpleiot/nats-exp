@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 	"encoding/binary"
-	"github.com/nats-io/nats-server/v2/test"
 	"log"
 	"os"
 	"time"
+
+	"github.com/nats-io/nats-server/v2/test"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -89,13 +90,19 @@ func main() {
 		log.Fatal("Error purging stream: ", err)
 	}
 
-	byteSlice := make([]byte, 4)
+	jsSyncPublish(ctx, js, 10000)
+	jsAsyncPublish(ctx, js, 10000)
+	natsPublish(ctx, nc, 10000)
+	readAllMessages(stream, false)
+	readAllMessages(stream, true)
+	readAllMessages(stream, false)
+}
 
-	ptCount := 10000
-
+func jsSyncPublish(ctx context.Context, js jetstream.JetStream, count int) {
 	// test sync jetstream publish
 	start := time.Now()
-	for i := uint32(0); i < uint32(ptCount); i++ {
+	byteSlice := make([]byte, 4)
+	for i := uint32(0); i < uint32(count); i++ {
 		binary.LittleEndian.PutUint32(byteSlice, i)
 		_, err := js.Publish(ctx, "n.123.value", byteSlice)
 		if err != nil {
@@ -104,11 +111,14 @@ func main() {
 	}
 
 	dur := time.Since(start).Seconds()
-	log.Printf("js.Publish insert rate for 10,000 points: %.0f pts/sec\n", float64(ptCount)/dur)
+	log.Printf("js.Publish insert rate for 10,000 points: %.0f pts/sec\n", float64(count)/dur)
+}
 
+func jsAsyncPublish(ctx context.Context, js jetstream.JetStream, count int) {
 	// test async jetstream publish
-	start = time.Now()
-	for i := uint32(0); i < uint32(ptCount); i++ {
+	start := time.Now()
+	byteSlice := make([]byte, 4)
+	for i := uint32(0); i < uint32(count); i++ {
 		binary.LittleEndian.PutUint32(byteSlice, i)
 		_, err := js.PublishAsync("n.123.value", byteSlice)
 		if err != nil {
@@ -122,12 +132,15 @@ func main() {
 		log.Fatal("publish async took too long")
 	}
 
-	dur = time.Since(start).Seconds()
-	log.Printf("js.PublishAsync insert rate for 10,000 points: %.0f pts/sec\n", float64(ptCount)/dur)
+	dur := time.Since(start).Seconds()
+	log.Printf("js.PublishAsync insert rate for 10,000 points: %.0f pts/sec\n", float64(count)/dur)
+}
 
+func natsPublish(ctx context.Context, nc *nats.Conn, count int) {
 	// test nats publish
-	start = time.Now()
-	for i := uint32(0); i < uint32(ptCount); i++ {
+	start := time.Now()
+	byteSlice := make([]byte, 4)
+	for i := uint32(0); i < uint32(count); i++ {
 		binary.LittleEndian.PutUint32(byteSlice, i)
 		err := nc.Publish("n.123.value", byteSlice)
 		if err != nil {
@@ -135,11 +148,17 @@ func main() {
 		}
 	}
 
-	dur = time.Since(start).Seconds()
-	log.Printf("nats.Publish insert rate for 10,000 points: %.0f pts/sec\n", float64(ptCount)/dur)
+	dur := time.Since(start).Seconds()
+	log.Printf("nats.Publish insert rate for 10,000 points: %.0f pts/sec\n", float64(count)/dur)
+
+}
+
+func readAllMessages(stream jetstream.Stream, ack bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
 	// test time to get data all data from stream
-	start = time.Now()
+	start := time.Now()
 	info, err := stream.Info(ctx)
 	if err != nil {
 		log.Fatal("Error getting stream info: ", err)
@@ -152,6 +171,11 @@ func main() {
 		AckPolicy:     jetstream.AckAllPolicy,
 		MaxAckPending: 1024 * 10,
 	}
+
+	if !ack {
+		consumerCfg.AckPolicy = jetstream.AckNonePolicy
+	}
+
 	consumer, err := stream.CreateConsumer(ctx, consumerCfg)
 
 	if err != nil {
@@ -166,6 +190,8 @@ func main() {
 	var msg jetstream.Msg
 	var meta *jetstream.MsgMetadata
 
+	count := 0
+
 	for {
 		msg, err = msgCtx.Next()
 		if err != nil {
@@ -177,12 +203,16 @@ func main() {
 			log.Fatalf("failed to retrieve msg metadata: %v", err)
 		}
 
-		// ack the msg whenever we reach a batch boundary
-		if meta.Sequence.Stream%uint64(consumerCfg.MaxAckPending) == 0 {
-			if err = msg.Ack(); err != nil {
-				log.Fatalf("failed to ack msg: %v", err)
+		if ack {
+			// ack the msg whenever we reach a batch boundary
+			if meta.Sequence.Stream%uint64(consumerCfg.MaxAckPending) == 0 {
+				if err = msg.Ack(); err != nil {
+					log.Fatalf("failed to ack msg: %v", err)
+				}
 			}
 		}
+
+		count++
 
 		if meta.NumPending == 0 {
 			// no more messages in the stream
@@ -195,8 +225,8 @@ func main() {
 		log.Fatalf("failed to ack msg: %v", err)
 	}
 
-	dur = time.Since(start).Seconds()
+	dur := time.Since(start).Seconds()
 	cnt := meta.Sequence.Stream - info.State.FirstSeq + 1
-	log.Printf("Get 30,000 points took %.2f, %.0f pts/sec\n", dur, float64(cnt)/dur)
-
+	log.Printf("ack: %v, Get %v points took %.2f, %.0f pts/sec\n", ack, count, dur,
+		float64(cnt)/dur)
 }
