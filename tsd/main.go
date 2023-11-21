@@ -139,12 +139,12 @@ func main() {
 	dur = time.Since(start).Seconds()
 	log.Printf("nats.Publish insert rate for 10,000 points: %.0f pts/sec\n", float64(ptCount)/dur)
 
-	readAllMessages(stream)
-	readAllMessages(stream)
-
+	readAllMessages(stream, false)
+	readAllMessages(stream, true)
+	readAllMessages(stream, false)
 }
 
-func readAllMessages(stream jetstream.Stream) {
+func readAllMessages(stream jetstream.Stream, ack bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -161,6 +161,10 @@ func readAllMessages(stream jetstream.Stream) {
 		// ack messages in batches
 		AckPolicy:     jetstream.AckAllPolicy,
 		MaxAckPending: 1024 * 10,
+	}
+
+	if !ack {
+		consumerCfg.AckPolicy = jetstream.AckNonePolicy
 	}
 
 	consumer, err := stream.CreateConsumer(ctx, consumerCfg)
@@ -190,10 +194,12 @@ func readAllMessages(stream jetstream.Stream) {
 			log.Fatalf("failed to retrieve msg metadata: %v", err)
 		}
 
-		// ack the msg whenever we reach a batch boundary
-		if meta.Sequence.Stream%uint64(consumerCfg.MaxAckPending) == 0 {
-			if err = msg.Ack(); err != nil {
-				log.Fatalf("failed to ack msg: %v", err)
+		if ack {
+			// ack the msg whenever we reach a batch boundary
+			if meta.Sequence.Stream%uint64(consumerCfg.MaxAckPending) == 0 {
+				if err = msg.Ack(); err != nil {
+					log.Fatalf("failed to ack msg: %v", err)
+				}
 			}
 		}
 
@@ -212,5 +218,6 @@ func readAllMessages(stream jetstream.Stream) {
 
 	dur := time.Since(start).Seconds()
 	cnt := meta.Sequence.Stream - info.State.FirstSeq + 1
-	log.Printf("Get %v points took %.2f, %.0f pts/sec\n", count, dur, float64(cnt)/dur)
+	log.Printf("ack: %v, Get %v points took %.2f, %.0f pts/sec\n", ack, count, dur,
+		float64(cnt)/dur)
 }
