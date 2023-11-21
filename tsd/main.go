@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 	"encoding/binary"
-	"github.com/nats-io/nats-server/v2/test"
 	"log"
 	"os"
 	"time"
+
+	"github.com/nats-io/nats-server/v2/test"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -138,8 +139,17 @@ func main() {
 	dur = time.Since(start).Seconds()
 	log.Printf("nats.Publish insert rate for 10,000 points: %.0f pts/sec\n", float64(ptCount)/dur)
 
+	readAllMessages(stream)
+	readAllMessages(stream)
+
+}
+
+func readAllMessages(stream jetstream.Stream) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	// test time to get data all data from stream
-	start = time.Now()
+	start := time.Now()
 	info, err := stream.Info(ctx)
 	if err != nil {
 		log.Fatal("Error getting stream info: ", err)
@@ -152,6 +162,7 @@ func main() {
 		AckPolicy:     jetstream.AckAllPolicy,
 		MaxAckPending: 1024 * 10,
 	}
+
 	consumer, err := stream.CreateConsumer(ctx, consumerCfg)
 
 	if err != nil {
@@ -165,6 +176,8 @@ func main() {
 
 	var msg jetstream.Msg
 	var meta *jetstream.MsgMetadata
+
+	count := 0
 
 	for {
 		msg, err = msgCtx.Next()
@@ -184,6 +197,8 @@ func main() {
 			}
 		}
 
+		count++
+
 		if meta.NumPending == 0 {
 			// no more messages in the stream
 			break
@@ -195,8 +210,7 @@ func main() {
 		log.Fatalf("failed to ack msg: %v", err)
 	}
 
-	dur = time.Since(start).Seconds()
+	dur := time.Since(start).Seconds()
 	cnt := meta.Sequence.Stream - info.State.FirstSeq + 1
-	log.Printf("Get 30,000 points took %.2f, %.0f pts/sec\n", dur, float64(cnt)/dur)
-
+	log.Printf("Get %v points took %.2f, %.0f pts/sec\n", count, dur, float64(cnt)/dur)
 }
