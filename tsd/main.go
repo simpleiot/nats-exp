@@ -90,13 +90,19 @@ func main() {
 		log.Fatal("Error purging stream: ", err)
 	}
 
-	byteSlice := make([]byte, 4)
+	jsSyncPublish(ctx, js, 10000)
+	jsAsyncPublish(ctx, js, 10000)
+	natsPublish(ctx, nc, 10000)
+	readAllMessages(stream, false)
+	readAllMessages(stream, true)
+	readAllMessages(stream, false)
+}
 
-	ptCount := 10000
-
+func jsSyncPublish(ctx context.Context, js jetstream.JetStream, count int) {
 	// test sync jetstream publish
 	start := time.Now()
-	for i := uint32(0); i < uint32(ptCount); i++ {
+	byteSlice := make([]byte, 4)
+	for i := uint32(0); i < uint32(count); i++ {
 		binary.LittleEndian.PutUint32(byteSlice, i)
 		_, err := js.Publish(ctx, "n.123.value", byteSlice)
 		if err != nil {
@@ -105,11 +111,14 @@ func main() {
 	}
 
 	dur := time.Since(start).Seconds()
-	log.Printf("js.Publish insert rate for 10,000 points: %.0f pts/sec\n", float64(ptCount)/dur)
+	log.Printf("js.Publish insert rate for 10,000 points: %.0f pts/sec\n", float64(count)/dur)
+}
 
+func jsAsyncPublish(ctx context.Context, js jetstream.JetStream, count int) {
 	// test async jetstream publish
-	start = time.Now()
-	for i := uint32(0); i < uint32(ptCount); i++ {
+	start := time.Now()
+	byteSlice := make([]byte, 4)
+	for i := uint32(0); i < uint32(count); i++ {
 		binary.LittleEndian.PutUint32(byteSlice, i)
 		_, err := js.PublishAsync("n.123.value", byteSlice)
 		if err != nil {
@@ -123,12 +132,15 @@ func main() {
 		log.Fatal("publish async took too long")
 	}
 
-	dur = time.Since(start).Seconds()
-	log.Printf("js.PublishAsync insert rate for 10,000 points: %.0f pts/sec\n", float64(ptCount)/dur)
+	dur := time.Since(start).Seconds()
+	log.Printf("js.PublishAsync insert rate for 10,000 points: %.0f pts/sec\n", float64(count)/dur)
+}
 
+func natsPublish(ctx context.Context, nc *nats.Conn, count int) {
 	// test nats publish
-	start = time.Now()
-	for i := uint32(0); i < uint32(ptCount); i++ {
+	start := time.Now()
+	byteSlice := make([]byte, 4)
+	for i := uint32(0); i < uint32(count); i++ {
 		binary.LittleEndian.PutUint32(byteSlice, i)
 		err := nc.Publish("n.123.value", byteSlice)
 		if err != nil {
@@ -136,12 +148,9 @@ func main() {
 		}
 	}
 
-	dur = time.Since(start).Seconds()
-	log.Printf("nats.Publish insert rate for 10,000 points: %.0f pts/sec\n", float64(ptCount)/dur)
+	dur := time.Since(start).Seconds()
+	log.Printf("nats.Publish insert rate for 10,000 points: %.0f pts/sec\n", float64(count)/dur)
 
-	readAllMessages(stream, false)
-	readAllMessages(stream, true)
-	readAllMessages(stream, false)
 }
 
 func readAllMessages(stream jetstream.Stream, ack bool) {
