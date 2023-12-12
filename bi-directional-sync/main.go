@@ -20,7 +20,7 @@ func main() {
 	o.LeafNode.Port = server.DEFAULT_LEAFNODE_PORT
 	o.NoSystemAccount = true
 
-	if o.StoreDir, err = os.MkdirTemp("bi-dir-sync-hub", "test"); err != nil {
+	if o.StoreDir, err = os.MkdirTemp("bi-directional-sync", "hub"); err != nil {
 		log.Fatalf("failed to create temporary jetstream directory: %v", err)
 	}
 
@@ -40,7 +40,7 @@ func main() {
 		},
 	}
 
-	if ol.StoreDir, err = os.MkdirTemp("bi-dir-sync-leaf", "test"); err != nil {
+	if ol.StoreDir, err = os.MkdirTemp("bi-directional-sync", "leaf"); err != nil {
 		log.Fatalf("failed to create temporary jetstream directory: %v", err)
 	}
 
