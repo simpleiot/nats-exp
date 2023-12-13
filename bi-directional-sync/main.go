@@ -1,13 +1,30 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/url"
 	"os"
+	"time"
 
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats-server/v2/test"
 )
+
+func checkFor(totalWait, sleepDur time.Duration, f func() error) {
+	timeout := time.Now().Add(totalWait)
+	var err error
+	for time.Now().Before(timeout) {
+		err = f()
+		if err == nil {
+			return
+		}
+		time.Sleep(sleepDur)
+	}
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+}
 
 func main() {
 	var err error
@@ -17,8 +34,8 @@ func main() {
 	o.Port = -1
 	o.JetStream = true
 	o.LeafNode.Host = o.Host
-	o.LeafNode.Port = server.DEFAULT_LEAFNODE_PORT
 	o.NoSystemAccount = true
+	o.LeafNode.Port = server.DEFAULT_LEAFNODE_PORT
 
 	if o.StoreDir, err = os.MkdirTemp("bi-directional-sync", "hub"); err != nil {
 		log.Fatalf("failed to create temporary jetstream directory: %v", err)
@@ -32,32 +49,21 @@ func main() {
 		_ = os.RemoveAll(o.StoreDir)
 	}()
 
+	u, err := url.Parse("leafnode://127.0.0.1")
+	if err != nil {
+		log.Fatal("Error parsing URL: ", err)
+	}
+
 	ol := test.DefaultTestOptions
-	o.Port = -2
-	o.LeafNode.Remotes = []*server.RemoteLeafOpts{
+	ol.Port = -1
+	ol.LeafNode.Remotes = []*server.RemoteLeafOpts{
 		{
-			URLs: []*url.URL{},
+			URLs: []*url.URL{u},
 		},
 	}
 
 	if ol.StoreDir, err = os.MkdirTemp("bi-directional-sync", "leaf"); err != nil {
 		log.Fatalf("failed to create temporary jetstream directory: %v", err)
-	}
-
-	conf := `
-  port: -2
-  leaf {
-   remotes = [
-    {
-     url: "leafnode://127.0.0.1"
-    }
-   ]
-  }
- `
-
-	err = os.WriteFile("conf", []byte(conf), 0644)
-	if err != nil {
-		log.Fatal("Error creating temp file: ", err)
 	}
 
 	srvLeaf := test.RunServer(&ol)
@@ -69,4 +75,12 @@ func main() {
 		_ = os.RemoveAll(ol.StoreDir)
 	}()
 
+	checkFor(5*time.Second, 100*time.Millisecond, func() error {
+		nln := srv.NumLeafNodes()
+		if nln != 1 {
+			return fmt.Errorf("Expected 1 leaf node, got: %v", nln)
+		}
+
+		return nil
+	})
 }
