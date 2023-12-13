@@ -62,6 +62,7 @@ func hubInit() (*server.Server, string, error) {
 	o := test.DefaultTestOptions
 	o.Port = -1
 	o.JetStream = true
+	o.JetStreamDomain = "hub"
 	o.LeafNode.Host = o.Host
 	o.NoSystemAccount = true
 	o.LeafNode.Port = server.DEFAULT_LEAFNODE_PORT
