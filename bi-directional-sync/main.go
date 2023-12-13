@@ -127,7 +127,7 @@ func hubOps(srv *server.Server) error {
 		_ = nc.Drain()
 	}()
 
-	js, err := jetstream.New(nc)
+	js, err := jetstream.NewWithDomain(nc, "hub")
 	if err != nil {
 		return fmt.Errorf("Error creating Jetstream: %w", err)
 	}
@@ -140,7 +140,11 @@ func hubOps(srv *server.Server) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	stream, _ := js.CreateStream(ctx, cfg)
+	stream, err := js.CreateStream(ctx, cfg)
+	if err != nil {
+		// FIXME this broke once we created the Jetstream with domain
+		return fmt.Errorf("Error creating stream on hub: %w", err)
+	}
 
 	_, _ = js.Publish(ctx, "n.123.value", []byte("12"))
 	_, _ = js.Publish(ctx, "n.123.value", []byte("13"))
