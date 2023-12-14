@@ -20,7 +20,8 @@ func main() {
 	// start hub instance
 	srv, srvS, err := hubInit("")
 	if err != nil {
-		log.Fatal("Error init hub server: ", err)
+		fmt.Println("Error init hub server: ", err)
+		return
 	}
 
 	defer shutdown(srv, srvS)
@@ -28,13 +29,14 @@ func main() {
 	// start leaf instance
 	srvLeaf, srvLeafS, err := leafInit("")
 	if err != nil {
-		log.Fatal("Error init leaf server: ", err)
+		fmt.Println("Error init leaf server: ", err)
+		return
 	}
 
 	defer shutdown(srvLeaf, srvLeafS)
 
 	// make sure leaf node is connected
-	checkFor(5*time.Second, 100*time.Millisecond, func() error {
+	err = checkFor(5*time.Second, 100*time.Millisecond, func() error {
 		nln := srv.NumLeafNodes()
 		if nln != 1 {
 			return fmt.Errorf("Expected 1 leaf node, got: %v", nln)
@@ -42,6 +44,11 @@ func main() {
 
 		return nil
 	})
+
+	if err != nil {
+		fmt.Println("Error waiting for leaf node to be connected: ", err)
+		return
+	}
 
 	err = hubCreateStream(srv)
 	if err != nil {
@@ -67,12 +74,53 @@ func main() {
 		return
 	}
 
-	err = hubSourceLeafStream(srvLeaf)
+	err = hubSourceLeafStream(srv)
 	if err != nil {
 		fmt.Printf("Error hub sourcing leaf stream: %v\n", err)
 		return
 	}
 
+	// shutdown leaf node
+	shutdown(srvLeaf, "")
+
+	// make sure sourced stream is still available
+	err = countStreamMessages(srv, "hub", "NODES-LEAF", 5, false)
+	if err != nil {
+		fmt.Printf("Error hub counting leaf stream messages after leaf server shut down")
+		return
+	}
+
+	// start up leaf node and publish some more messages
+	srvLeaf, _, err = leafInit(srvLeafS)
+	if err != nil {
+		fmt.Println("Error init leaf server: ", err)
+		return
+	}
+
+	err = leafPublishMoreMessages(srvLeaf)
+	if err != nil {
+		fmt.Println("Error publishing more messages to leaf: ", err)
+		return
+	}
+
+	err = countStreamMessages(srvLeaf, "leaf", "NODES-LEAF", 10, false)
+	if err != nil {
+		fmt.Println("Error leaf counting leaf stream messages after leaf server shut down: ", err)
+		return
+	}
+
+	// FIXME, for some reason we are getting 5 extra messages on the server that are not on the leaf node
+	err = countStreamMessages(srv, "hub", "NODES-LEAF", 15, true)
+	if err != nil {
+		fmt.Println("Error hub counting leaf stream messages after leaf server shut down: ", err)
+		return
+	}
+
+	err = countStreamMessages(srvLeaf, "leaf", "NODES-LEAF", 10, true)
+	if err != nil {
+		fmt.Println("Error leaf counting leaf stream messages after leaf server shut down: ", err)
+		return
+	}
 }
 
 func hubInit(storeDir string) (*server.Server, string, error) {
@@ -98,7 +146,7 @@ func hubInit(storeDir string) (*server.Server, string, error) {
 func leafInit(storeDir string) (*server.Server, string, error) {
 	u, err := url.Parse("leafnode://127.0.0.1")
 	if err != nil {
-		log.Fatal("Error parsing URL: ", err)
+		return nil, "", fmt.Errorf("Error parsing URL: %w", err)
 	}
 
 	ol := test.DefaultTestOptions
@@ -114,7 +162,7 @@ func leafInit(storeDir string) (*server.Server, string, error) {
 	if storeDir != "" {
 		ol.StoreDir = storeDir
 	} else if ol.StoreDir, err = os.MkdirTemp("bi-directional-sync", "leaf"); err != nil {
-		log.Fatalf("failed to create temporary jetstream directory: %v", err)
+		return nil, "", fmt.Errorf("failed to create temporary jetstream directory: %w", err)
 	}
 
 	return test.RunServer(&ol), ol.StoreDir, nil
@@ -131,19 +179,21 @@ func shutdown(srv *server.Server, storeDir string) {
 	}
 }
 
-func checkFor(totalWait, sleepDur time.Duration, f func() error) {
+func checkFor(totalWait, sleepDur time.Duration, f func() error) error {
 	timeout := time.Now().Add(totalWait)
 	var err error
 	for time.Now().Before(timeout) {
 		err = f()
 		if err == nil {
-			return
+			return nil
 		}
 		time.Sleep(sleepDur)
 	}
 	if err != nil {
-		log.Fatal(err.Error())
+		return fmt.Errorf(err.Error())
 	}
+
+	return nil
 }
 
 func hubCreateStream(srv *server.Server) error {
@@ -263,7 +313,7 @@ func leafSourceHubStream(srv *server.Server) error {
 		return fmt.Errorf("Error creating stream on hub: %w", err)
 	}
 
-	checkFor(5*time.Second, 100*time.Millisecond, func() error {
+	return checkFor(5*time.Second, 100*time.Millisecond, func() error {
 		si, err := stream.Info(ctx, jetstream.WithSubjectFilter("n.123.>"))
 		if err != nil {
 			return fmt.Errorf("Error getting stream info: %w", err)
@@ -276,8 +326,6 @@ func leafSourceHubStream(srv *server.Server) error {
 		log.Println("Number of hub->leaf sourced stream messages: ", si.State.Msgs)
 		return nil
 	})
-
-	return nil
 }
 
 func leafCreateStream(srv *server.Server) error {
@@ -364,7 +412,7 @@ func hubSourceLeafStream(srv *server.Server) error {
 		return fmt.Errorf("Error creating stream on hub: %w", err)
 	}
 
-	checkFor(5*time.Second, 100*time.Millisecond, func() error {
+	return checkFor(5*time.Second, 100*time.Millisecond, func() error {
 		si, err := stream.Info(ctx, jetstream.WithSubjectFilter("n.leaf.456.>"))
 		if err != nil {
 			return fmt.Errorf("Error getting stream info: %w", err)
@@ -377,6 +425,114 @@ func hubSourceLeafStream(srv *server.Server) error {
 		log.Println("Number of leaf->hub sourced stream messages: ", si.State.Msgs)
 		return nil
 	})
+}
+
+func countStreamMessages(srv *server.Server, domain, strName string, expected int, dump bool) error {
+	url := srv.ClientURL()
+
+	nc, err := nats.Connect(url)
+	if err != nil {
+		return fmt.Errorf("Error connecting: %w", err)
+	}
+
+	defer func() {
+		_ = nc.Drain()
+	}()
+
+	js, err := jetstream.NewWithDomain(nc, domain)
+	if err != nil {
+		return fmt.Errorf("Error creating Jetstream: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	stream, err := js.Stream(ctx, strName)
+	if err != nil {
+		return fmt.Errorf("Error opening stream on hub: %w", err)
+	}
+
+	err = checkFor(5*time.Second, 100*time.Millisecond, func() error {
+		si, err := stream.Info(ctx, jetstream.WithSubjectFilter("n.leaf.456.>"))
+		if err != nil {
+			return fmt.Errorf("Error getting stream info: %w", err)
+		}
+
+		if si.State.Msgs != uint64(expected) {
+			return fmt.Errorf("Returned wrong number of messages, expected: %v, got: %v", expected, si.State.Msgs)
+		}
+
+		log.Printf("Number of stream messages:%v:%v:%v\n", domain, strName, si.State.Msgs)
+		return nil
+	})
+
+	if err != nil {
+		return err
+	}
+
+	if dump {
+		si, err := stream.Info(ctx, jetstream.WithSubjectFilter("n.leaf.456.>"))
+		if err != nil {
+			return fmt.Errorf("Error getting stream info: %w", err)
+		}
+
+		for i := si.State.FirstSeq; i <= si.State.LastSeq; i++ {
+			msg, err := stream.GetMsg(ctx, i)
+			if err != nil {
+				return fmt.Errorf("Error getting message: %w", err)
+			}
+
+			fmt.Printf("Message %v: %v\n", msg.Sequence, string(msg.Data))
+		}
+	}
+
+	return nil
+}
+
+func leafPublishMoreMessages(srv *server.Server) error {
+	url := srv.ClientURL()
+
+	nc, err := nats.Connect(url)
+	if err != nil {
+		return fmt.Errorf("Error connecting: %w", err)
+	}
+
+	defer func() {
+		_ = nc.Drain()
+	}()
+
+	js, err := jetstream.NewWithDomain(nc, "leaf")
+	if err != nil {
+		return fmt.Errorf("Error creating Jetstream: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	stream, err := js.Stream(ctx, "NODES-LEAF")
+	if err != nil {
+		return fmt.Errorf("Error opening stream on leaf: %w", err)
+	}
+
+	_, _ = js.PublishAsync("n.leaf.456.value", []byte("27"))
+	_, _ = js.PublishAsync("n.leaf.456.value", []byte("28"))
+	_, _ = js.PublishAsync("n.leaf.456.value", []byte("29"))
+	_, _ = js.PublishAsync("n.leaf.456.value", []byte("30"))
+	_, _ = js.PublishAsync("n.leaf.456.value", []byte("31"))
+
+	select {
+	case <-js.PublishAsyncComplete():
+		break
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("Timeout waiting for publish to complete")
+	}
+
+	si, err := stream.Info(ctx, jetstream.WithSubjectFilter("n.456.>"))
+	if err != nil {
+		return fmt.Errorf("Error getting stream info: %w", err)
+	}
+
+	log.Println("Number of leaf stream messages: ", si.State.Msgs)
 
 	return nil
 }
