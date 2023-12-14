@@ -174,7 +174,7 @@ func leafOps(srv *server.Server) error {
 		_ = nc.Drain()
 	}()
 
-	js, err := jetstream.New(nc)
+	js, err := jetstream.NewWithDomain(nc, "hub")
 	if err != nil {
 		return fmt.Errorf("Error creating Jetstream: %w", err)
 	}
