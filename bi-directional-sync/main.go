@@ -18,20 +18,20 @@ func main() {
 	var err error
 
 	// start hub instance
-	srv, srvS, err := hubInit()
+	srv, srvS, err := hubInit("")
 	if err != nil {
 		log.Fatal("Error init hub server: ", err)
 	}
 
-	defer cleanup(srv, srvS)
+	defer shutdown(srv, srvS)
 
 	// start leaf instance
-	srvLeaf, srvLeafS, err := leafInit()
+	srvLeaf, srvLeafS, err := leafInit("")
 	if err != nil {
 		log.Fatal("Error init leaf server: ", err)
 	}
 
-	defer cleanup(srvLeaf, srvLeafS)
+	defer shutdown(srvLeaf, srvLeafS)
 
 	// make sure leaf node is connected
 	checkFor(5*time.Second, 100*time.Millisecond, func() error {
@@ -72,9 +72,10 @@ func main() {
 		fmt.Printf("Error hub sourcing leaf stream: %v\n", err)
 		return
 	}
+
 }
 
-func hubInit() (*server.Server, string, error) {
+func hubInit(storeDir string) (*server.Server, string, error) {
 	var err error
 
 	o := test.DefaultTestOptions
@@ -85,14 +86,16 @@ func hubInit() (*server.Server, string, error) {
 	o.NoSystemAccount = true
 	o.LeafNode.Port = server.DEFAULT_LEAFNODE_PORT
 
-	if o.StoreDir, err = os.MkdirTemp("bi-directional-sync", "hub"); err != nil {
+	if storeDir != "" {
+		o.StoreDir = storeDir
+	} else if o.StoreDir, err = os.MkdirTemp("bi-directional-sync", "hub"); err != nil {
 		return nil, "", fmt.Errorf("failed to create temporary jetstream directory: %v", err)
 	}
 
 	return test.RunServer(&o), o.StoreDir, nil
 }
 
-func leafInit() (*server.Server, string, error) {
+func leafInit(storeDir string) (*server.Server, string, error) {
 	u, err := url.Parse("leafnode://127.0.0.1")
 	if err != nil {
 		log.Fatal("Error parsing URL: ", err)
@@ -108,17 +111,24 @@ func leafInit() (*server.Server, string, error) {
 		},
 	}
 
-	if ol.StoreDir, err = os.MkdirTemp("bi-directional-sync", "leaf"); err != nil {
+	if storeDir != "" {
+		ol.StoreDir = storeDir
+	} else if ol.StoreDir, err = os.MkdirTemp("bi-directional-sync", "leaf"); err != nil {
 		log.Fatalf("failed to create temporary jetstream directory: %v", err)
 	}
 
 	return test.RunServer(&ol), ol.StoreDir, nil
 }
 
-func cleanup(srv *server.Server, storeDir string) {
-	srv.Shutdown()
-	srv.WaitForShutdown()
-	_ = os.RemoveAll(storeDir)
+func shutdown(srv *server.Server, storeDir string) {
+	if srv != nil {
+		srv.Shutdown()
+		srv.WaitForShutdown()
+	}
+
+	if storeDir != "" {
+		_ = os.RemoveAll(storeDir)
+	}
 }
 
 func checkFor(totalWait, sleepDur time.Duration, f func() error) {
