@@ -43,13 +43,13 @@ func main() {
 		return nil
 	})
 
-	err = hubOps(srv)
+	err = hubCreateStream(srv)
 	if err != nil {
 		fmt.Printf("Error executing hub ops: %v\n", err)
 		return
 	}
 
-	err = leafOps(srvLeaf)
+	err = leafConnectHubStream(srvLeaf)
 	if err != nil {
 		fmt.Printf("Error executing leaf ops: %v\n", err)
 		return
@@ -116,7 +116,7 @@ func checkFor(totalWait, sleepDur time.Duration, f func() error) {
 	}
 }
 
-func hubOps(srv *server.Server) error {
+func hubCreateStream(srv *server.Server) error {
 	url := srv.ClientURL()
 
 	nc, err := nats.Connect(url)
@@ -162,7 +162,7 @@ func hubOps(srv *server.Server) error {
 	return nil
 }
 
-func leafOps(srv *server.Server) error {
+func leafConnectHubStream(srv *server.Server) error {
 	url := srv.ClientURL()
 
 	nc, err := nats.Connect(url)
