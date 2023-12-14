@@ -97,6 +97,11 @@ func main() {
 		return
 	}
 
+	err = countStreamMessages(srv, "hub", "NODES-HUB", 8, false)
+	if err != nil {
+		fmt.Printf("Error hub counting hub stream messages while leaf is down: %v", err)
+	}
+
 	// start up leaf node
 	srvLeaf, _, err = leafInit(srvLeafS)
 	if err != nil {
