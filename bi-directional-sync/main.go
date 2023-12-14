@@ -464,7 +464,7 @@ func countStreamMessages(srv *server.Server, domain, strName string, expected in
 
 	defer func() {
 		if dump {
-			si, err := stream.Info(ctx, jetstream.WithSubjectFilter("n.leaf.456.>"))
+			si, err := stream.Info(ctx)
 			if err != nil {
 				fmt.Printf("Error getting stream info: %v", err)
 				return
@@ -483,7 +483,7 @@ func countStreamMessages(srv *server.Server, domain, strName string, expected in
 	}()
 
 	return checkFor(5*time.Second, 100*time.Millisecond, func() error {
-		si, err := stream.Info(ctx, jetstream.WithSubjectFilter("n.leaf.456.>"))
+		si, err := stream.Info(ctx)
 		if err != nil {
 			return fmt.Errorf("Error getting stream info: %w", err)
 		}
