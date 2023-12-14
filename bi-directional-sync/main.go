@@ -45,19 +45,19 @@ func main() {
 
 	err = hubCreateStream(srv)
 	if err != nil {
-		fmt.Printf("Error executing hub ops: %v\n", err)
+		fmt.Printf("Error creating hub stream: %v\n", err)
 		return
 	}
 
 	err = leafConnectHubStream(srvLeaf)
 	if err != nil {
-		fmt.Printf("Error executing leaf ops: %v\n", err)
+		fmt.Printf("Error leaf connecting to hub stream: %v\n", err)
 		return
 	}
 
 	err = leafSourceHubStream(srvLeaf)
 	if err != nil {
-		fmt.Printf("Error executing leaf ops: %v\n", err)
+		fmt.Printf("Error leaf sourcing hub stream: %v\n", err)
 		return
 	}
 
