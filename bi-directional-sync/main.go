@@ -90,36 +90,46 @@ func main() {
 		return
 	}
 
-	// start up leaf node and publish some more messages
+	// publish some more messages to hub while leaf is powered down
+	err = hubPublishMoreMessages(srv)
+	if err != nil {
+		fmt.Println("Error publishing more messages to hub: ", err)
+		return
+	}
+
+	// start up leaf node
 	srvLeaf, _, err = leafInit(srvLeafS)
 	if err != nil {
 		fmt.Println("Error init leaf server: ", err)
 		return
 	}
 
+	// make sure hub messages get synced to leaf
+	// FIXME for some reason we are only getting 4 messages here instead of 8
+	err = countStreamMessages(srvLeaf, "leaf", "NODES-HUB", 8, false)
+	if err != nil {
+		fmt.Println("Error leaf counting hub sourced stream messages after leaf server powered back up: ", err)
+	}
+
 	err = leafPublishMoreMessages(srvLeaf)
 	if err != nil {
 		fmt.Println("Error publishing more messages to leaf: ", err)
-		return
 	}
 
 	err = countStreamMessages(srvLeaf, "leaf", "NODES-LEAF", 10, false)
 	if err != nil {
 		fmt.Println("Error leaf counting leaf stream messages after leaf server shut down: ", err)
-		return
 	}
 
 	// FIXME, for some reason we are getting 5 extra messages on the server that are not on the leaf node
-	err = countStreamMessages(srv, "hub", "NODES-LEAF", 15, true)
+	err = countStreamMessages(srv, "hub", "NODES-LEAF", 10, true)
 	if err != nil {
 		fmt.Println("Error hub counting leaf stream messages after leaf server shut down: ", err)
-		return
 	}
 
 	err = countStreamMessages(srvLeaf, "leaf", "NODES-LEAF", 10, true)
 	if err != nil {
 		fmt.Println("Error leaf counting leaf stream messages after leaf server shut down: ", err)
-		return
 	}
 }
 
@@ -452,7 +462,27 @@ func countStreamMessages(srv *server.Server, domain, strName string, expected in
 		return fmt.Errorf("Error opening stream on hub: %w", err)
 	}
 
-	err = checkFor(5*time.Second, 100*time.Millisecond, func() error {
+	defer func() {
+		if dump {
+			si, err := stream.Info(ctx, jetstream.WithSubjectFilter("n.leaf.456.>"))
+			if err != nil {
+				fmt.Printf("Error getting stream info: %v", err)
+				return
+			}
+
+			for i := si.State.FirstSeq; i <= si.State.LastSeq; i++ {
+				msg, err := stream.GetMsg(ctx, i)
+				if err != nil {
+					fmt.Printf("Error getting message: %v", err)
+					return
+				}
+
+				fmt.Printf("Message %v: %v\n", msg.Sequence, string(msg.Data))
+			}
+		}
+	}()
+
+	return checkFor(5*time.Second, 100*time.Millisecond, func() error {
 		si, err := stream.Info(ctx, jetstream.WithSubjectFilter("n.leaf.456.>"))
 		if err != nil {
 			return fmt.Errorf("Error getting stream info: %w", err)
@@ -465,28 +495,6 @@ func countStreamMessages(srv *server.Server, domain, strName string, expected in
 		log.Printf("Number of stream messages:%v:%v:%v\n", domain, strName, si.State.Msgs)
 		return nil
 	})
-
-	if err != nil {
-		return err
-	}
-
-	if dump {
-		si, err := stream.Info(ctx, jetstream.WithSubjectFilter("n.leaf.456.>"))
-		if err != nil {
-			return fmt.Errorf("Error getting stream info: %w", err)
-		}
-
-		for i := si.State.FirstSeq; i <= si.State.LastSeq; i++ {
-			msg, err := stream.GetMsg(ctx, i)
-			if err != nil {
-				return fmt.Errorf("Error getting message: %w", err)
-			}
-
-			fmt.Printf("Message %v: %v\n", msg.Sequence, string(msg.Data))
-		}
-	}
-
-	return nil
 }
 
 func leafPublishMoreMessages(srv *server.Server) error {
@@ -533,6 +541,46 @@ func leafPublishMoreMessages(srv *server.Server) error {
 	}
 
 	log.Println("Number of leaf stream messages: ", si.State.Msgs)
+
+	return nil
+}
+
+func hubPublishMoreMessages(srv *server.Server) error {
+	url := srv.ClientURL()
+
+	nc, err := nats.Connect(url)
+	if err != nil {
+		return fmt.Errorf("Error connecting: %w", err)
+	}
+
+	defer func() {
+		_ = nc.Drain()
+	}()
+
+	js, err := jetstream.NewWithDomain(nc, "hub")
+	if err != nil {
+		return fmt.Errorf("Error creating Jetstream: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	stream, err := js.Stream(ctx, "NODES-HUB")
+	if err != nil {
+		return fmt.Errorf("Error creating stream on hub: %w", err)
+	}
+
+	_, _ = js.Publish(ctx, "n.hub.123.value", []byte("16"))
+	_, _ = js.Publish(ctx, "n.hub.123.value", []byte("17"))
+	_, _ = js.Publish(ctx, "n.hub.123.value", []byte("18"))
+	_, _ = js.Publish(ctx, "n.hub.123.value", []byte("19"))
+
+	si, err := stream.Info(ctx, jetstream.WithSubjectFilter("n.123.>"))
+	if err != nil {
+		return fmt.Errorf("Error getting stream info: %w", err)
+	}
+
+	log.Println("Number of hub stream messages: ", si.State.Msgs)
 
 	return nil
 }
