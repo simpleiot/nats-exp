@@ -119,9 +119,9 @@ func main() {
 		fmt.Printf("Error hub counting messages sourced from leaf: %v", err)
 	}
 
-	// heading("Shut down leaf node")
-	// shutdown leaf node
-	//shutdown(srvLeaf, "")
+	heading("Shut down leaf node")
+
+	shutdown(srvLeaf, "")
 
 	// make sure sourced stream is still available
 	_, err = getMessages(srv, "hub", "NODES-LEAF", 5)
@@ -142,15 +142,13 @@ func main() {
 		fmt.Printf("Error hub counting hub stream messages while leaf is down: %v", err)
 	}
 
-	// heading("Start up leaf node")
-	// start up leaf node
-	/*
-		srvLeaf, _, err = leafInit(srvLeafS)
-		if err != nil {
-			fmt.Println("Error init leaf server: ", err)
-			return
-		}
-	*/
+	heading("Start up leaf node")
+
+	srvLeaf, _, err = leafInit(srvLeafS)
+	if err != nil {
+		fmt.Println("Error init leaf server: ", err)
+		return
+	}
 
 	// make sure hub messages get synced to leaf
 	// FIXME for some reason we are only getting 4 messages here instead of 8
@@ -404,7 +402,7 @@ func getMessages(srv *server.Server, domain, strName string, expected int) (mess
 	var cntErr error
 
 	if expected >= 0 {
-		cntErr = checkFor(5*time.Second, 100*time.Millisecond, func() error {
+		cntErr = checkFor(10*time.Second, 100*time.Millisecond, func() error {
 			si, err := stream.Info(ctx)
 			if err != nil {
 				return fmt.Errorf("Error getting stream info: %w", err)
