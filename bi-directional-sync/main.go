@@ -183,19 +183,16 @@ func main() {
 		fmt.Println("Error leaf counting leaf stream messages after leaf server shut down: ", err)
 	}
 
-	// FIXME, for some reason we are getting 5 extra messages on the server that are not on the leaf node
-	msgs, err = getMessages(srv, "hub", "NODES-LEAF", 10)
-	if err != nil {
-		fmt.Println("Error hub counting leaf stream messages after leaf server shut down: ", err)
-		msgs.dump()
-	}
-
 	msgs, err = getMessages(srvLeaf, "leaf", "NODES-LEAF", 10)
 	if err != nil {
 		fmt.Println("Error leaf counting leaf stream messages after leaf server shut down: ", err)
 	}
 
-	msgs.dump()
+	msgs, err = getMessages(srv, "hub", "NODES-LEAF", 10)
+	if err != nil {
+		fmt.Println("Error hub counting leaf stream messages after leaf server shut down: ", err)
+		msgs.dump()
+	}
 }
 
 func heading(s string) {
@@ -333,12 +330,12 @@ func sourceStream(srv *server.Server, domain, stream, sourceDomain, subject stri
 	}
 
 	cfg := jetstream.StreamConfig{
-		Name:     stream,
-		Subjects: []string{subject},
+		Name: stream,
 		Sources: []*jetstream.StreamSource{
 			{
-				Name:   stream,
-				Domain: sourceDomain,
+				Name:          stream,
+				Domain:        sourceDomain,
+				FilterSubject: subject,
 			},
 		},
 	}
