@@ -74,12 +74,25 @@ func main() {
 		fmt.Printf("Error hub counting hub stream messages: %v", err)
 	}
 
-	err = leafSourceHubStream(srvLeaf)
+	// before we source stream, we should not see any messages in the leaf domain
+	err = countStreamMessages(srvLeaf, "leaf", "NODES-HUB", 0, false)
+	if err == nil {
+		fmt.Printf("expected error sourcing messages before sourced: %v", err)
+	}
+
+	err = sourceStream(srvLeaf, "leaf", "NODES-HUB", "hub", "n.hub.>")
 	if err != nil {
 		fmt.Printf("Error leaf sourcing hub stream: %v\n", err)
 		return
 	}
 
+	// count messages in sourced stream
+	err = countStreamMessages(srvLeaf, "leaf", "NODES-HUB", 4, false)
+	if err != nil {
+		fmt.Printf("Error leaf counting messages sourced from hub: %v", err)
+	}
+
+	// now, create a stream on leaf node and source to hub
 	err = createStream(srvLeaf, "leaf", "NODES-LEAF", "n.leaf.>")
 	if err != nil {
 		fmt.Printf("Error creating leaf stream: %v\n", err)
@@ -92,10 +105,15 @@ func main() {
 		return
 	}
 
-	err = hubSourceLeafStream(srv)
+	err = sourceStream(srv, "hub", "NODES-LEAF", "leaf", "n.leaf.>")
 	if err != nil {
 		fmt.Printf("Error hub sourcing leaf stream: %v\n", err)
 		return
+	}
+
+	err = countStreamMessages(srv, "hub", "NODES-LEAF", 5, false)
+	if err != nil {
+		fmt.Printf("Error hub counting messages sourced from leaf: %v", err)
 	}
 
 	// shutdown leaf node
@@ -270,7 +288,9 @@ func createStream(srv *server.Server, domain, stream, subject string) error {
 	return nil
 }
 
-func leafSourceHubStream(srv *server.Server) error {
+func sourceStream(srv *server.Server, domain, stream, sourceDomain, subject string) error {
+	log.Printf("source stream: server:%v domain:%v stream:%v source-domain:%v subject:%v",
+		srv.Name(), domain, stream, sourceDomain, subject)
 	url := srv.ClientURL()
 
 	nc, err := nats.Connect(url)
@@ -282,18 +302,18 @@ func leafSourceHubStream(srv *server.Server) error {
 		_ = nc.Drain()
 	}()
 
-	js, err := jetstream.NewWithDomain(nc, "leaf")
+	js, err := jetstream.NewWithDomain(nc, domain)
 	if err != nil {
 		return fmt.Errorf("Error creating Jetstream: %w", err)
 	}
 
 	cfg := jetstream.StreamConfig{
-		Name:     "NODES-HUB",
-		Subjects: []string{"n.hub.>"},
+		Name:     stream,
+		Subjects: []string{subject},
 		Sources: []*jetstream.StreamSource{
 			{
-				Name:   "NODES-HUB",
-				Domain: "hub",
+				Name:   stream,
+				Domain: sourceDomain,
 			},
 		},
 	}
@@ -301,75 +321,12 @@ func leafSourceHubStream(srv *server.Server) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	stream, err := js.CreateStream(ctx, cfg)
+	_, err = js.CreateStream(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("Error creating stream on hub: %w", err)
 	}
 
-	return checkFor(5*time.Second, 100*time.Millisecond, func() error {
-		si, err := stream.Info(ctx, jetstream.WithSubjectFilter("n.123.>"))
-		if err != nil {
-			return fmt.Errorf("Error getting stream info: %w", err)
-		}
-
-		if si.State.Msgs != 4 {
-			return fmt.Errorf("Returned wrong number of messages: %v", si.State.Msgs)
-		}
-
-		log.Println("Number of hub->leaf sourced stream messages: ", si.State.Msgs)
-		return nil
-	})
-}
-
-func hubSourceLeafStream(srv *server.Server) error {
-	url := srv.ClientURL()
-
-	nc, err := nats.Connect(url)
-	if err != nil {
-		return fmt.Errorf("Error connecting: %w", err)
-	}
-
-	defer func() {
-		_ = nc.Drain()
-	}()
-
-	js, err := jetstream.NewWithDomain(nc, "hub")
-	if err != nil {
-		return fmt.Errorf("Error creating Jetstream: %w", err)
-	}
-
-	cfg := jetstream.StreamConfig{
-		Name:     "NODES-LEAF",
-		Subjects: []string{"n.leaf.>"},
-		Sources: []*jetstream.StreamSource{
-			{
-				Name:   "NODES-LEAF",
-				Domain: "leaf",
-			},
-		},
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	stream, err := js.CreateStream(ctx, cfg)
-	if err != nil {
-		return fmt.Errorf("Error creating stream on hub: %w", err)
-	}
-
-	return checkFor(5*time.Second, 100*time.Millisecond, func() error {
-		si, err := stream.Info(ctx, jetstream.WithSubjectFilter("n.leaf.456.>"))
-		if err != nil {
-			return fmt.Errorf("Error getting stream info: %w", err)
-		}
-
-		if si.State.Msgs != 5 {
-			return fmt.Errorf("Returned wrong number of messages: %v", si.State.Msgs)
-		}
-
-		log.Println("Number of leaf->hub sourced stream messages: ", si.State.Msgs)
-		return nil
-	})
+	return nil
 }
 
 func countStreamMessages(srv *server.Server, domain, strName string, expected int, dump bool) error {
