@@ -157,11 +157,6 @@ func main() {
 		fmt.Println("Error publishing more messages to leaf: ", err)
 	}
 
-	err = countStreamMessages(srvLeaf, "leaf", "NODES-LEAF", 5, false)
-	if err != nil {
-		fmt.Printf("Error hub counting leaf stream messages: %v", err)
-	}
-
 	err = countStreamMessages(srvLeaf, "leaf", "NODES-LEAF", 10, false)
 	if err != nil {
 		fmt.Println("Error leaf counting leaf stream messages after leaf server shut down: ", err)
