@@ -56,6 +56,11 @@ func main() {
 		return
 	}
 
+	err = countStreamMessages(srv, "hub", "NODES-HUB", 4, false)
+	if err != nil {
+		fmt.Printf("Error hub counting hub stream messages: %v", err)
+	}
+
 	err = leafConnectHubStream(srvLeaf)
 	if err != nil {
 		fmt.Printf("Error leaf connecting to hub stream: %v\n", err)
@@ -91,7 +96,7 @@ func main() {
 	}
 
 	// publish some more messages to hub while leaf is powered down
-	err = hubPublishMoreMessages(srv)
+	err = publishMessages(srv, "n.hub.123.value", []string{"16", "17", "18", "19"})
 	if err != nil {
 		fmt.Println("Error publishing more messages to hub: ", err)
 		return
@@ -116,7 +121,7 @@ func main() {
 		fmt.Println("Error leaf counting hub sourced stream messages after leaf server powered back up: ", err)
 	}
 
-	err = leafPublishMoreMessages(srvLeaf)
+	err = publishMessages(srvLeaf, "n.leaf.456.value", []string{"27", "28", "29", "30", "31"})
 	if err != nil {
 		fmt.Println("Error publishing more messages to leaf: ", err)
 	}
@@ -142,6 +147,7 @@ func hubInit(storeDir string) (*server.Server, string, error) {
 	var err error
 
 	o := test.DefaultTestOptions
+	o.ServerName = "hub"
 	o.Port = -1
 	o.JetStream = true
 	o.JetStreamDomain = "hub"
@@ -165,6 +171,7 @@ func leafInit(storeDir string) (*server.Server, string, error) {
 	}
 
 	ol := test.DefaultTestOptions
+	ol.ServerName = "leaf"
 	ol.Port = -1
 	ol.JetStream = true
 	ol.JetStreamDomain = "leaf"
@@ -502,7 +509,17 @@ func countStreamMessages(srv *server.Server, domain, strName string, expected in
 	})
 }
 
-func leafPublishMoreMessages(srv *server.Server) error {
+func msgs2String(msgs []string) string {
+	ret := ""
+	for _, m := range msgs {
+		ret += m + " "
+	}
+
+	return ret
+}
+
+func publishMessages(srv *server.Server, subject string, messages []string) error {
+	log.Printf("Publish: %v -> %v -> %v\n", srv.Name(), subject, msgs2String(messages))
 	url := srv.ClientURL()
 
 	nc, err := nats.Connect(url)
@@ -522,70 +539,12 @@ func leafPublishMoreMessages(srv *server.Server) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	stream, err := js.Stream(ctx, "NODES-LEAF")
-	if err != nil {
-		return fmt.Errorf("Error opening stream on leaf: %w", err)
+	for _, m := range messages {
+		_, err = js.Publish(ctx, subject, []byte(m))
+		if err != nil {
+			return fmt.Errorf("Publish error: %w", err)
+		}
 	}
-
-	_, _ = js.PublishAsync("n.leaf.456.value", []byte("27"))
-	_, _ = js.PublishAsync("n.leaf.456.value", []byte("28"))
-	_, _ = js.PublishAsync("n.leaf.456.value", []byte("29"))
-	_, _ = js.PublishAsync("n.leaf.456.value", []byte("30"))
-	_, _ = js.PublishAsync("n.leaf.456.value", []byte("31"))
-
-	select {
-	case <-js.PublishAsyncComplete():
-		break
-	case <-time.After(5 * time.Second):
-		return fmt.Errorf("Timeout waiting for publish to complete")
-	}
-
-	si, err := stream.Info(ctx, jetstream.WithSubjectFilter("n.456.>"))
-	if err != nil {
-		return fmt.Errorf("Error getting stream info: %w", err)
-	}
-
-	log.Println("Number of leaf stream messages: ", si.State.Msgs)
-
-	return nil
-}
-
-func hubPublishMoreMessages(srv *server.Server) error {
-	url := srv.ClientURL()
-
-	nc, err := nats.Connect(url)
-	if err != nil {
-		return fmt.Errorf("Error connecting: %w", err)
-	}
-
-	defer func() {
-		_ = nc.Drain()
-	}()
-
-	js, err := jetstream.NewWithDomain(nc, "hub")
-	if err != nil {
-		return fmt.Errorf("Error creating Jetstream: %w", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	stream, err := js.Stream(ctx, "NODES-HUB")
-	if err != nil {
-		return fmt.Errorf("Error creating stream on hub: %w", err)
-	}
-
-	_, _ = js.Publish(ctx, "n.hub.123.value", []byte("16"))
-	_, _ = js.Publish(ctx, "n.hub.123.value", []byte("17"))
-	_, _ = js.Publish(ctx, "n.hub.123.value", []byte("18"))
-	_, _ = js.Publish(ctx, "n.hub.123.value", []byte("19"))
-
-	si, err := stream.Info(ctx, jetstream.WithSubjectFilter("n.123.>"))
-	if err != nil {
-		return fmt.Errorf("Error getting stream info: %w", err)
-	}
-
-	log.Println("Number of hub stream messages: ", si.State.Msgs)
 
 	return nil
 }
