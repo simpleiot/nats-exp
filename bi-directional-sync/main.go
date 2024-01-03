@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/url"
 	"os"
 	"time"
@@ -50,6 +49,8 @@ func main() {
 		return
 	}
 
+	heading("Create stream on hub and source to leaf")
+
 	err = createStream(srv, "hub", "NODES-HUB", "n.hub.>")
 	if err != nil {
 		fmt.Printf("Error creating hub stream: %v\n", err)
@@ -62,20 +63,20 @@ func main() {
 		return
 	}
 
-	err = countStreamMessages(srv, "hub", "NODES-HUB", 4, false)
+	_, err = getMessages(srv, "hub", "NODES-HUB", 4)
 	if err != nil {
 		fmt.Printf("Error hub counting hub stream messages: %v", err)
 	}
 
 	// count messages in hub stream from leaf node. This works because
 	// the leaf node can see everything on the hub and forwards requests.
-	err = countStreamMessages(srvLeaf, "hub", "NODES-HUB", 4, false)
+	_, err = getMessages(srvLeaf, "hub", "NODES-HUB", 4)
 	if err != nil {
 		fmt.Printf("Error hub counting hub stream messages: %v", err)
 	}
 
 	// before we source stream, we should not see any messages in the leaf domain
-	err = countStreamMessages(srvLeaf, "leaf", "NODES-HUB", 0, false)
+	_, err = getMessages(srvLeaf, "leaf", "NODES-HUB", 0)
 	if err == nil {
 		fmt.Printf("expected error sourcing messages before sourced: %v", err)
 	}
@@ -87,10 +88,12 @@ func main() {
 	}
 
 	// count messages in sourced stream
-	err = countStreamMessages(srvLeaf, "leaf", "NODES-HUB", 4, false)
+	_, err = getMessages(srvLeaf, "leaf", "NODES-HUB", 4)
 	if err != nil {
 		fmt.Printf("Error leaf counting messages sourced from hub: %v", err)
 	}
+
+	heading("Create stream on leaf and source to hub")
 
 	// now, create a stream on leaf node and source to hub
 	err = createStream(srvLeaf, "leaf", "NODES-LEAF", "n.leaf.>")
@@ -111,16 +114,18 @@ func main() {
 		return
 	}
 
-	err = countStreamMessages(srv, "hub", "NODES-LEAF", 5, false)
+	_, err = getMessages(srv, "hub", "NODES-LEAF", 5)
 	if err != nil {
 		fmt.Printf("Error hub counting messages sourced from leaf: %v", err)
 	}
+
+	heading("Shut down leaf node")
 
 	// shutdown leaf node
 	shutdown(srvLeaf, "")
 
 	// make sure sourced stream is still available
-	err = countStreamMessages(srv, "hub", "NODES-LEAF", 5, false)
+	_, err = getMessages(srv, "hub", "NODES-LEAF", 5)
 	if err != nil {
 		fmt.Printf("Error hub counting leaf stream messages after leaf server shut down")
 		return
@@ -133,10 +138,12 @@ func main() {
 		return
 	}
 
-	err = countStreamMessages(srv, "hub", "NODES-HUB", 8, false)
+	_, err = getMessages(srv, "hub", "NODES-HUB", 8)
 	if err != nil {
 		fmt.Printf("Error hub counting hub stream messages while leaf is down: %v", err)
 	}
+
+	heading("Start up leaf node")
 
 	// start up leaf node
 	srvLeaf, _, err = leafInit(srvLeafS)
@@ -147,31 +154,42 @@ func main() {
 
 	// make sure hub messages get synced to leaf
 	// FIXME for some reason we are only getting 4 messages here instead of 8
-	err = countStreamMessages(srvLeaf, "leaf", "NODES-HUB", 8, false)
+	_, err = getMessages(srvLeaf, "leaf", "NODES-HUB", 8)
 	if err != nil {
 		fmt.Println("Error leaf counting hub sourced stream messages after leaf server powered back up: ", err)
 	}
+
+	heading("Publish more messages to leaf")
 
 	err = publishMessages(srvLeaf, "n.leaf.456.value", []string{"27", "28", "29", "30", "31"})
 	if err != nil {
 		fmt.Println("Error publishing more messages to leaf: ", err)
 	}
 
-	err = countStreamMessages(srvLeaf, "leaf", "NODES-LEAF", 10, false)
+	_, err = getMessages(srvLeaf, "leaf", "NODES-LEAF", 10)
 	if err != nil {
 		fmt.Println("Error leaf counting leaf stream messages after leaf server shut down: ", err)
 	}
 
 	// FIXME, for some reason we are getting 5 extra messages on the server that are not on the leaf node
-	err = countStreamMessages(srv, "hub", "NODES-LEAF", 10, true)
+	msgs, err := getMessages(srv, "hub", "NODES-LEAF", 10)
 	if err != nil {
 		fmt.Println("Error hub counting leaf stream messages after leaf server shut down: ", err)
+		msgs.dump()
 	}
 
-	err = countStreamMessages(srvLeaf, "leaf", "NODES-LEAF", 10, true)
+	msgs, err = getMessages(srvLeaf, "leaf", "NODES-LEAF", 10)
 	if err != nil {
 		fmt.Println("Error leaf counting leaf stream messages after leaf server shut down: ", err)
 	}
+
+	msgs.dump()
+}
+
+func heading(s string) {
+	fmt.Println("=====================================================")
+	fmt.Println("       " + s)
+	fmt.Println("=====================================================")
 }
 
 func hubInit(storeDir string) (*server.Server, string, error) {
@@ -250,7 +268,7 @@ func checkFor(totalWait, sleepDur time.Duration, f func() error) error {
 }
 
 func createStream(srv *server.Server, domain, stream, subject string) error {
-	log.Printf("create stream: server:%v domain:%v stream:%v subject:%v\n", srv.Name(), domain, stream, subject)
+	fmt.Printf("* Create stream: server:%v domain:%v stream:%v subject:%v\n", srv.Name(), domain, stream, subject)
 	url := srv.ClientURL()
 
 	nc, err := nats.Connect(url)
@@ -284,7 +302,7 @@ func createStream(srv *server.Server, domain, stream, subject string) error {
 }
 
 func sourceStream(srv *server.Server, domain, stream, sourceDomain, subject string) error {
-	log.Printf("source stream: server:%v domain:%v stream:%v source-domain:%v subject:%v",
+	fmt.Printf("* Source stream: server:%v domain:%v stream:%v source-domain:%v subject:%v",
 		srv.Name(), domain, stream, sourceDomain, subject)
 	url := srv.ClientURL()
 
@@ -324,12 +342,27 @@ func sourceStream(srv *server.Server, domain, stream, sourceDomain, subject stri
 	return nil
 }
 
-func countStreamMessages(srv *server.Server, domain, strName string, expected int, dump bool) error {
+type message struct {
+	seq int
+	msg string
+}
+
+type messages []message
+
+func (m *messages) dump() {
+	for _, ms := range *m {
+		fmt.Printf("  Message %v: %v\n", ms.seq, ms.msg)
+	}
+}
+
+func getMessages(srv *server.Server, domain, strName string, expected int) (messages, error) {
 	url := srv.ClientURL()
+
+	var ret messages
 
 	nc, err := nats.Connect(url)
 	if err != nil {
-		return fmt.Errorf("Error connecting: %w", err)
+		return ret, fmt.Errorf("Error connecting: %w", err)
 	}
 
 	defer func() {
@@ -338,7 +371,7 @@ func countStreamMessages(srv *server.Server, domain, strName string, expected in
 
 	js, err := jetstream.NewWithDomain(nc, domain)
 	if err != nil {
-		return fmt.Errorf("Error creating Jetstream: %w", err)
+		return ret, fmt.Errorf("Error creating Jetstream: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -346,42 +379,43 @@ func countStreamMessages(srv *server.Server, domain, strName string, expected in
 
 	stream, err := js.Stream(ctx, strName)
 	if err != nil {
-		return fmt.Errorf("Error opening stream on hub: %w", err)
+		return ret, fmt.Errorf("Error opening stream on hub: %w", err)
 	}
 
-	defer func() {
-		if dump {
+	var cntErr error
+
+	if expected >= 0 {
+		cntErr = checkFor(5*time.Second, 100*time.Millisecond, func() error {
 			si, err := stream.Info(ctx)
 			if err != nil {
-				fmt.Printf("Error getting stream info: %v", err)
-				return
+				return fmt.Errorf("Error getting stream info: %w", err)
 			}
 
-			for i := si.State.FirstSeq; i <= si.State.LastSeq; i++ {
-				msg, err := stream.GetMsg(ctx, i)
-				if err != nil {
-					fmt.Printf("Error getting message: %v", err)
-					return
-				}
-
-				fmt.Printf("Message %v: %v\n", msg.Sequence, string(msg.Data))
+			if si.State.Msgs != uint64(expected) {
+				return fmt.Errorf("Returned wrong number of messages, expected: %v, got: %v", expected, si.State.Msgs)
 			}
-		}
-	}()
 
-	return checkFor(5*time.Second, 100*time.Millisecond, func() error {
-		si, err := stream.Info(ctx)
+			fmt.Printf("* Stream count: server:%v domain:%v stream:%v count:%v\n", srv.Name(), domain, strName, si.State.Msgs)
+			return nil
+		})
+	}
+
+	si, err := stream.Info(ctx)
+	if err != nil {
+		return ret, fmt.Errorf("Error getting stream info: %w", err)
+	}
+
+	for i := si.State.FirstSeq; i <= si.State.LastSeq; i++ {
+		msg, err := stream.GetMsg(ctx, i)
 		if err != nil {
-			return fmt.Errorf("Error getting stream info: %w", err)
+			return ret, fmt.Errorf("Error getting message: %w", err)
 		}
 
-		if si.State.Msgs != uint64(expected) {
-			return fmt.Errorf("Returned wrong number of messages, expected: %v, got: %v", expected, si.State.Msgs)
-		}
+		ret = append(ret, message{seq: int(msg.Sequence), msg: string(msg.Data)})
+	}
 
-		log.Printf("stream count: server:%v domain:%v stream:%v count:%v\n", srv.Name(), domain, strName, si.State.Msgs)
-		return nil
-	})
+	return ret, cntErr
+
 }
 
 func msgs2String(msgs []string) string {
@@ -394,7 +428,7 @@ func msgs2String(msgs []string) string {
 }
 
 func publishMessages(srv *server.Server, subject string, messages []string) error {
-	log.Printf("Publish: %v -> %v -> %v\n", srv.Name(), subject, msgs2String(messages))
+	fmt.Printf("* Publish: %v -> %v -> %v\n", srv.Name(), subject, msgs2String(messages))
 	url := srv.ClientURL()
 
 	nc, err := nats.Connect(url)
