@@ -7,19 +7,32 @@ import (
 	"os"
 	"time"
 
+	"github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 )
 
 func main() {
-	// Use the env variable if running in the container, otherwise use the default.
-	url := os.Getenv("NATS_URL")
-	if url == "" {
-		url = nats.DefaultURL
+	// Start embedded NATS server with JetStream enabled
+	o := test.DefaultTestOptions
+	o.Port = -1
+	o.JetStream = true
+	var err error
+	if o.StoreDir, err = os.MkdirTemp("", "point-store"); err != nil {
+		log.Fatalf("Failed to create temporary jetstream directory: %v", err)
 	}
+	
+	srv := test.RunServer(&o)
+	defer func() {
+		srv.Shutdown()
+		os.RemoveAll(o.StoreDir)
+	}()
 
-	// Create an unauthenticated connection to NATS.
-	nc, _ := nats.Connect(url)
+	// Create an unauthenticated connection to the embedded NATS server.
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		log.Fatalf("Failed to connect to NATS: %v", err)
+	}
 
 	// Drain is a safe way to to ensure all buffered messages that were published
 	// are sent and all buffered messages received on a subscription are processed
@@ -29,7 +42,10 @@ func main() {
 	// Access `JetStream` which provides methods to create
 	// streams and consumers as well as convenience methods for publishing
 	// to streams and consuming messages from the streams.
-	js, _ := jetstream.New(nc)
+	js, err := jetstream.New(nc)
+	if err != nil {
+		log.Fatalf("Failed to create JetStream context: %v", err)
+	}
 
 	// We will declare the initial stream configuration by specifying
 	// the name and subjects. Stream names are commonly uppercased to
@@ -49,7 +65,10 @@ func main() {
 	defer cancel()
 
 	// Finally, let's add/create the stream with the default (no) limits.
-	stream, _ := js.CreateStream(ctx, cfg)
+	stream, err := js.CreateStream(ctx, cfg)
+	if err != nil {
+		log.Fatalf("Failed to create stream: %v", err)
+	}
 
 	// Let's publish messages for several different "nodes".
 	js.Publish(ctx, "n.123.description", []byte("Injector temperature"))
@@ -67,7 +86,10 @@ func main() {
 	js.Publish(ctx, "n.789.value", []byte("423"))
 
 	// get state of n.123 and ignore others
-	si, _ := stream.Info(ctx, jetstream.WithSubjectFilter("n.123.>"))
+	si, err := stream.Info(ctx, jetstream.WithSubjectFilter("n.123.>"))
+	if err != nil {
+		log.Fatalf("Failed to get stream info: %v", err)
+	}
 
 	// create a map to hold the state of n.123
 	state := make(map[string]string)
